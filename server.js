@@ -30,7 +30,7 @@ app.get('/api/customers/:id', (req, res) => {
 
         // this is a wordaround. currently this is only updated when a client fetches details
         // we will need to trigger this on server side in the future
-        if (position === 0) {
+        if (position === 0 && customer.status === 'waiting') {
             customer.status = 'tableReady';
         }
 
@@ -69,6 +69,19 @@ app.post('/api/customers', (req, res) => {
         position
     });
 });
+
+app.put('/api/customers/:id/check-in', (req, res) => {
+    const { id } = req.params;
+    const customer = customers.find(c => c.id == id); // this needs to be loose comparison because we are comparing string to number
+
+    if (customer?.status === 'tableReady') {
+        customer.status = 'seated';
+        // todo: add customer to seat queue
+        res.json({ message: `Customer ${id} checked in and seated`});
+    } else {
+        res.status(404).json({ message: 'Customer not ready or already seated'});
+    }
+})
 
 function inQueue(c) {
     return c.status === 'waiting' || c.status === 'tableReady';
