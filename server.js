@@ -5,7 +5,14 @@ const cors = require('cors');
 
 const app = express();
 const server = http.createServer(app);
-const io = socketIo(server);
+const io = socketIo(server, {
+    cors: {
+        origin: 'http://localhost:3000',
+        methods: ['GET', 'POST'], // what is this???
+        allowedHeaders: ['my-custom-header'], // what is this???
+        credentials: true // Allow credentials (cookies, authorization headers) do we need this??
+    }
+});
 
 // in-mem for now. Will update to something per persistent
 const customers = [];
@@ -13,20 +20,25 @@ const customers = [];
 app.use(cors());
 app.use(express.json());
 
+io.on('connection', (socket) => {
+    socket.on('setCustomerId', (data) => {
+        console.log(`Socket ${socket.id} joined room ${data.customerId}`);
+        socket.join(data.customerId);
+    });
+});
+
 app.get('/', (_, res) => {
     res.status(200).send('Hello World!');
 });
 
 app.get('/api/customers/:id', (req, res) => {
     const { id } = req.params;
-    console.log(`Incoming get request for id ${id}`);
     
     // need to implement a better way to retrieve customer when we implement data store
     const customer = customers.find(c => c.id == id);
 
     if (customer) {
         const position = customers.filter(c => inQueue(c) && c.id < customer.id).length;
-        console.log(`Found customer. Name: ${customer.name}, Position: ${position}`);
 
         // this is a wordaround. currently this is only updated when a client fetches details
         // we will need to trigger this on server side in the future
@@ -48,7 +60,6 @@ app.get('/api/customers/:id', (req, res) => {
 });
 
 app.post('/api/customers', (req, res) => {
-    console.log(req.body);
 
     const { name, partySize } = req.body;
     
