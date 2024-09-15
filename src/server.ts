@@ -42,9 +42,6 @@ io.adapter(createAdapter(pubClient, subClient));
 
 const SERVE_TIME_PER_PERSON = 3 * 1000;
 const TOTAL_SEATS = 10;
-// socket.io rooms are not working. This is the workaround
-// todo: replace with a LRU cache
-// const socketMap: { [key: string]: Socket[] } = {};
 
 const seatQueue = Queue('seating', {
     redis: {
@@ -84,7 +81,6 @@ app.use(express.json());
 io.on('connection', (socket: Socket) => {
     socket.on('setCustomerId', (data: { customerId: number }) => {
         socket.join(data.customerId.toString());
-        console.log(`Socket ${socket.id} is joining room ${data.customerId}`);
     });
 });
 
@@ -203,7 +199,7 @@ app.put('/api/customers/:id/check-in', async (req: Request, res: Response) => {
 
         await addCustomerToRedis(customer);
 
-        console.log(`Seating customer ${id}. Available seats now: ${availableSeats}`);
+        console.log(`Seating customer ${id}. There are ${availableSeats} seats available`);
         seatQueue.add({ customerId: id }, {
             delay: customer.partySize * SERVE_TIME_PER_PERSON,
             removeOnComplete: true
