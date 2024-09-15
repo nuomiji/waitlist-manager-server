@@ -18,6 +18,7 @@ const io = socketIo(server, {
 const SERVE_TIME_PER_PERSON = 3 * 1000;
 const TOTAL_SEATS = 10;
 // socket.io rooms are not working. This is the workaround
+// todo: replace with a LRU cache
 const socketMap = {};
 
 // in-mem for now. Will update to something per persistent
@@ -69,6 +70,18 @@ app.get('/api/customers/:id', (req, res) => {
         console.log('No customer found');
         res.status(404).json({ message: 'Customer not found'});
     }
+});
+
+app.delete('/api/customers/:id', (req, res) => {
+    const { id } = req.params;
+    
+    const customer = customers.find(c => c.id == id);
+    
+    if (customer) {
+        customer.status = 'done';
+    }
+
+    res.sendStatus(204);
 });
 
 /**
