@@ -1,9 +1,12 @@
-const express = require('express');
-const http = require('http');
-const socketIo = require('socket.io');
-const cors = require('cors');
-const Queue = require('bull');
-const {
+import { Request, Response } from "express";
+import { Socket } from "socket.io";
+import express from 'express';
+import http from 'http';
+import { Server as SocketIOServer } from 'socket.io';
+import cors from 'cors';
+import Queue from 'bull';
+
+import {
     initRedis,
     addCustomerToRedis,
     deleteCustomerFromRedis,
@@ -12,11 +15,13 @@ const {
     getNextCustomerId,
     getAvailableSeats,
     setAvailableSeats,
-} = require('./redis-helpers');
+} from './redis-helpers';
+
+import { Customer } from './types';
 
 const app = express();
 const server = http.createServer(app);
-const io = socketIo(server, {
+const io = new SocketIOServer(server, {
     cors: {
         origin: 'http://localhost:3000',
         methods: ['GET', 'POST'], // what is this???
@@ -29,7 +34,7 @@ const SERVE_TIME_PER_PERSON = 3 * 1000;
 const TOTAL_SEATS = 10;
 // socket.io rooms are not working. This is the workaround
 // todo: replace with a LRU cache
-const socketMap = {};
+const socketMap: { [key: string]: Socket[] } = {};
 
 const seatQueue = Queue('seating');
 
@@ -38,7 +43,7 @@ initRedis()
         console.log(`setting availableSeats to ${TOTAL_SEATS}`);
         return setAvailableSeats(TOTAL_SEATS); // note that this async
     })
-    .catch(err => {
+    .catch((err: Error) => {
         console.error(err);
     })
 
@@ -49,9 +54,9 @@ app.use(express.json());
 /**
  * Maps socket to a customerId so we know which socket to inform when table is ready
  */
-io.on('connection', (socket) => {
-    socket.on('setCustomerId', (data) => {
-        const sockets = (socketMap[data.customerId.toString()] || []);
+io.on('connection', (socket: Socket) => {
+    socket.on('setCustomerId', (data: { customerId: number }) => {
+        const sockets = (socketMap[data.customerId.toString()] || []) as Socket[];
         sockets.push(socket);
         socketMap[data.customerId.toString()] = sockets;
     });
@@ -61,14 +66,14 @@ io.on('connection', (socket) => {
  * Fetches customer details. Sent when client does a page refresh
  * 
  */
-app.get('/api/customers/:id', async (req, res) => {
+app.get('/api/customers/:id', async (req: Request, res: Response) => {
     const { id } = req.params;
 
     const customer = await getCustomerFromRedis(id);
     const cachedCustomers = await getAllCustomersFromRedis();
 
     if (customer) {
-        const position = cachedCustomers.filter(c => inQueue(c) && c.id < customer.id).length;
+        const position = cachedCustomers.filter((c: Customer) => inQueue(c) && c.id < customer.id).length;
 
         if (position === 0 && customer.status === 'waiting' && customer.partySize <= await getAvailableSeats()) {
             customer.status = 'tableReady';
@@ -88,7 +93,7 @@ app.get('/api/customers/:id', async (req, res) => {
     }
 });
 
-app.delete('/api/customers/:id', async (req, res) => {
+app.delete('/api/customers/:id', async (req: Request, res: Response) => {
     const { id } = req.params;
 
     try {
@@ -103,7 +108,7 @@ app.delete('/api/customers/:id', async (req, res) => {
 /**
  * Handles when a new customer joins
  */
-app.post('/api/customers', async (req, res) => {
+app.post('/api/customers', async (req: Request, res: Response) => {
 
     const { name, partySize } = req.body;
 
@@ -114,7 +119,7 @@ app.post('/api/customers', async (req, res) => {
         return;
     }
 
-    const newCustomer = {
+    const newCustomer : Customer = {
         id: await getNextCustomerId(),
         name,
         partySize,
@@ -141,8 +146,8 @@ app.post('/api/customers', async (req, res) => {
     });
 });
 
-app.put('/api/customers/:id/check-in', async (req, res) => {
-    const id = Number(req.params?.id);
+app.put('/api/customers/:id/check-in', async (req: Request, res: Response) => {
+    const id = req.params?.id;
     const customer = await getCustomerFromRedis(id);
 
     let availableSeats = await getAvailableSeats();
@@ -167,7 +172,7 @@ app.put('/api/customers/:id/check-in', async (req, res) => {
 /**
  * Handles when customer finishes eating. We seat the next customer
  */
-seatQueue.process(async (job) => {
+seatQueue.process(async (job: { data: { customerId: string } }) => {
     const { customerId } = job.data;
     const customer = await getCustomerFromRedis(customerId);
 
@@ -182,7 +187,7 @@ seatQueue.process(async (job) => {
         // notify next awaiting customer
         try {
             const customers = await getAllCustomersFromRedis()
-            const nextCustomer = customers.find(c => c.status === 'waiting');
+            const nextCustomer = customers.find((c: Customer) => c.status === 'waiting');
 
             // fetch availableSeats again to make sure we have the most up-to-date data
             availableSeats = await getAvailableSeats();
@@ -205,7 +210,7 @@ seatQueue.process(async (job) => {
     }
 })
 
-function inQueue(c) {
+function inQueue(c: Customer) {
     return c.status === 'waiting' || c.status === 'tableReady';
 }
 
