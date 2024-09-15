@@ -10,6 +10,8 @@ const {
     getCustomerFromRedis,
     getAllCustomersFromRedis,
     getNextCustomerId,
+    getAvailableSeats,
+    setAvailableSeats,
 } = require('./redis-helpers');
 
 const app = express();
@@ -29,12 +31,17 @@ const TOTAL_SEATS = 10;
 // todo: replace with a LRU cache
 const socketMap = {};
 
-// in-mem for now. Will update to something per persistent
 const seatQueue = Queue('seating');
-// todo: add lock for running on multiple instances
-let availableSeats = TOTAL_SEATS;
 
-initRedis();
+initRedis()
+    .then(() => {
+        console.log(`setting availableSeats to ${TOTAL_SEATS}`);
+        return setAvailableSeats(TOTAL_SEATS); // note that this async
+    })
+    .catch(err => {
+        console.error(err);
+    })
+
 
 app.use(cors());
 app.use(express.json());
@@ -44,7 +51,6 @@ app.use(express.json());
  */
 io.on('connection', (socket) => {
     socket.on('setCustomerId', (data) => {
-        // console.log(`Socket ${socket.id} mapped to ${data.customerId}`);
         const sockets = (socketMap[data.customerId.toString()] || []);
         sockets.push(socket);
         socketMap[data.customerId.toString()] = sockets;
@@ -64,7 +70,7 @@ app.get('/api/customers/:id', async (req, res) => {
     if (customer) {
         const position = cachedCustomers.filter(c => inQueue(c) && c.id < customer.id).length;
 
-        if (position === 0 && customer.status === 'waiting' && customer.partySize <= availableSeats) {
+        if (position === 0 && customer.status === 'waiting' && customer.partySize <= await getAvailableSeats()) {
             customer.status = 'tableReady';
             await addCustomerToRedis(customer);
         }
@@ -120,7 +126,7 @@ app.post('/api/customers', async (req, res) => {
     const position = customers.filter(inQueue).length;
 
     // currently there are 2 places where we set tableReady. Maybe this is not good
-    if (position === 0 && newCustomer.partySize <= availableSeats) {
+    if (position === 0 && newCustomer.partySize <= await getAvailableSeats()) {
         newCustomer.status = 'tableReady';
     }
 
@@ -139,9 +145,11 @@ app.put('/api/customers/:id/check-in', async (req, res) => {
     const id = Number(req.params?.id);
     const customer = await getCustomerFromRedis(id);
 
+    let availableSeats = await getAvailableSeats();
     if (customer?.status === 'tableReady' && customer.partySize <= availableSeats) {
         customer.status = 'seated';
         availableSeats -= customer.partySize;
+        await setAvailableSeats(availableSeats);
 
         await addCustomerToRedis(customer);
 
@@ -166,7 +174,9 @@ seatQueue.process(async (job) => {
     if (customer) {
         await deleteCustomerFromRedis(customerId);
 
+        let availableSeats = await getAvailableSeats();
         availableSeats += customer.partySize;
+        await setAvailableSeats(availableSeats);
         console.log(`Customer ${customer.id} finished dining and are leaving the restaurant. Available seats now: ${availableSeats}`);
 
         // notify next awaiting customer
@@ -174,6 +184,8 @@ seatQueue.process(async (job) => {
             const customers = await getAllCustomersFromRedis()
             const nextCustomer = customers.find(c => c.status === 'waiting');
 
+            // fetch availableSeats again to make sure we have the most up-to-date data
+            availableSeats = await getAvailableSeats();
             if (nextCustomer && nextCustomer.partySize <= availableSeats) {
                 nextCustomer.status = 'tableReady';
                 await addCustomerToRedis(nextCustomer);

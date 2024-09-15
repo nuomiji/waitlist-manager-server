@@ -2,35 +2,42 @@ const Redis = require('ioredis');
 
 const CUSTOMERS_KEY = 'customers';
 const CUSTOER_ID_KEY = 'customerIdCounter';
+const AVAILABLE_SEATS_KEY = 'availableSeats'
+
 let redis;
 
 module.exports = {
     initRedis: () => {
-        redis = new Redis();
+        return new Promise((resolve, reject) => {
 
-        redis.on('connect', () => {
-            console.log(`Redis client connected`);
-        });
+            redis = new Redis();
 
-        redis.on('ready', () => {
-            console.log(`Redis client ready to use`);
-        });
+            redis.on('connect', () => {
+                console.log(`Redis client connected`);
+            });
 
-        redis.on('error', (err) => {
-            console.error('Redis connection error:', err);
-        });
+            redis.on('ready', () => {
+                console.log(`Redis client ready to use`);
+                resolve();
+            });
 
-        redis.on('close', () => {
-            console.log('Redis connection closed');
-        });
+            redis.on('error', (err) => {
+                console.error('Redis connection error:', err);
+            });
 
-        redis.on('reconnecting', () => {
-            console.log('Redis client reconnecting...');
-        });
+            redis.on('close', () => {
+                console.log('Redis connection closed');
+                reject();
+            });
 
-        redis.on('end', () => {
-            console.log('Redis connection ended');
-        });
+            redis.on('reconnecting', () => {
+                console.log('Redis client reconnecting...');
+            });
+
+            redis.on('end', () => {
+                console.log('Redis connection ended');
+            });
+        })
     },
     addCustomerToRedis: async (customer) => {
         await redis.hset(CUSTOMERS_KEY, customer.id, JSON.stringify(customer));
@@ -62,7 +69,18 @@ module.exports = {
     },
     getNextCustomerId: async () => {
         return await redis.incr(CUSTOER_ID_KEY);
-    }
+    },
+    getAvailableSeats: async () => {
+        const seats = await redis.get(AVAILABLE_SEATS_KEY);
+        if (seats) {
+            return parseInt(seats);
+        } else {
+            console.error(`Failed to get availableSeats`);
+        }
+    },
+    setAvailableSeats: async (seats) => {
+        return await redis.set(AVAILABLE_SEATS_KEY, seats.toString());
+    },
 }
 
 
