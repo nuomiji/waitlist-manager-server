@@ -32,7 +32,7 @@ const io = new SocketIOServer(server, {
 });
 
 // Set up Redis clients for the Socket.io adapter
-const pubClient = createClient({ url: 'redis://localhost:6379 '});
+const pubClient = createClient({ url: 'redis://localhost:6379' });
 const subClient = pubClient.duplicate();
 pubClient.connect();
 subClient.connect();
@@ -50,18 +50,20 @@ const seatQueue = Queue('seating', {
     }
 });
 
+/**
+ * Initializes Redis and updates available seats based on the current customer data.
+ */
 initRedis()
     .then(getAllCustomersFromRedis)
     .then((customers: Customer[]) => {
-        // recalculate number of seated people upon app start up,
-        // in case availableSeats and customers get out of sync
+        // Recalculate number of seated people upon app start up
         return customers.reduce((seated: number, c: Customer) => {
             if (c.status === 'seated') {
                 return seated + c.partySize;
             } else {
                 return seated;
             }
-        }, 0)
+        }, 0);
     })
     .then((seated: number) => {
         console.log(`setting availableSeats to ${TOTAL_SEATS - seated}`);
@@ -71,29 +73,36 @@ initRedis()
         console.error(err);
     });
 
-
 app.use(cors());
 app.use(express.json());
 
 /**
- * Maps socket to a customerId so we know which socket to inform when table is ready
+ * Maps socket to a customerId so we know which socket to inform when the table is ready.
+ * @param {Socket} socket The connected socket instance
  */
 io.on('connection', (socket: Socket) => {
+    /**
+     * Associates a customer ID with the socket connection
+     * @param {Object} data - Contains the customerId.
+     * @param {number} data.customerId - The customer ID to associate with the socket.
+     */
     socket.on('setCustomerId', (data: { customerId: number }) => {
         socket.join(data.customerId.toString());
     });
 });
 
 /**
- * Fetches customer details. Sent when client does a page refresh
- * 
+ * Fetches customer details, including their queue position and seating status.
+ * @route GET /api/customers/:id
+ * @param {Request} req - Express request object
+ * @param {Response} res - Express response object
  */
 app.get('/api/customers/:id', async (req: Request, res: Response) => {
     const { id } = req.params;
 
     const customer = await getCustomerFromRedis(id);
     const cachedCustomers = await getAllCustomersFromRedis();
-    const availableSeats = await getAvailableSeats()
+    const availableSeats = await getAvailableSeats();
 
     if (customer && availableSeats !== null) {
         const position = cachedCustomers.filter((c: Customer) => inQueue(c) && c.id < customer.id).length;
@@ -115,10 +124,16 @@ app.get('/api/customers/:id', async (req: Request, res: Response) => {
         res.status(404).json({ message: 'Customer not found' });
     } else {
         console.error(`Error in fetching availableSeats in the server`);
-        res.status(500).json({ message: `Error in fetching availableSeats in the server`});
+        res.status(500).json({ message: `Error in fetching availableSeats in the server` });
     }
 });
 
+/**
+ * Deletes a customer from the system.
+ * @route DELETE /api/customers/:id
+ * @param {Request} req - Express request object
+ * @param {Response} res - Express response object
+ */
 app.delete('/api/customers/:id', async (req: Request, res: Response) => {
     const { id } = req.params;
 
@@ -132,15 +147,18 @@ app.delete('/api/customers/:id', async (req: Request, res: Response) => {
 });
 
 /**
- * Handles when a new customer joins
+ * Adds a new customer to the queue.
+ * @route POST /api/customers
+ * @param {Request} req - Express request object containing customer name and party size
+ * @param {Response} res - Express response object
  */
 app.post('/api/customers', async (req: Request, res: Response) => {
 
-    const availableSeats = await getAvailableSeats()
+    const availableSeats = await getAvailableSeats();
 
     if (availableSeats === null) {
         console.error(`Error in fetching availableSeats in the server`);
-        res.status(500).json({ message: `Error in fetching availableSeats in the server`});
+        res.status(500).json({ message: `Error in fetching availableSeats in the server` });
         return;
     }
 
@@ -153,18 +171,16 @@ app.post('/api/customers', async (req: Request, res: Response) => {
         return;
     }
 
-    const newCustomer : Customer = {
+    const newCustomer: Customer = {
         id: await getNextCustomerId(),
         name,
         partySize,
         status: 'waiting'
     };
 
-    // this will do a parse on all the customers, maybe there is a more efficient way
     const customers = await getAllCustomersFromRedis();
     const position = customers.filter(inQueue).length;
 
-    // currently there are 2 places where we set tableReady. Maybe this is not good
     if (position === 0 && newCustomer.partySize <= availableSeats) {
         newCustomer.status = 'tableReady';
     }
@@ -180,6 +196,12 @@ app.post('/api/customers', async (req: Request, res: Response) => {
     });
 });
 
+/**
+ * Checks in a customer, seating them if their table is ready.
+ * @route PUT /api/customers/:id/check-in
+ * @param {Request} req - Express request object containing the customer ID
+ * @param {Response} res - Express response object
+ */
 app.put('/api/customers/:id/check-in', async (req: Request, res: Response) => {
     const id = req.params?.id;
     const customer = await getCustomerFromRedis(id);
@@ -188,7 +210,7 @@ app.put('/api/customers/:id/check-in', async (req: Request, res: Response) => {
 
     if (availableSeats === null) {
         console.error(`Error in fetching availableSeats in the server`);
-        res.status(500).json({ message: `Error in fetching availableSeats in the server`});
+        res.status(500).json({ message: `Error in fetching availableSeats in the server` });
         return;
     }
 
@@ -211,7 +233,8 @@ app.put('/api/customers/:id/check-in', async (req: Request, res: Response) => {
 });
 
 /**
- * Handles when customer finishes eating. We seat the next customer
+ * Processes the completion of a customer's dining session and notifies the next waiting customer.
+ * @param {Object} job - Bull job containing the customerId
  */
 seatQueue.process(async (job: { data: { customerId: string } }) => {
     const { customerId } = job.data;
@@ -230,12 +253,10 @@ seatQueue.process(async (job: { data: { customerId: string } }) => {
         await setAvailableSeats(availableSeats);
         console.log(`Customer ${customer.id} finished dining and are leaving the restaurant. Available seats now: ${availableSeats}`);
 
-        // notify next awaiting customer
         try {
-            const customers = await getAllCustomersFromRedis()
+            const customers = await getAllCustomersFromRedis();
             const nextCustomer = customers.find((c: Customer) => c.status === 'waiting');
 
-            // fetch availableSeats again to make sure we have the most up-to-date data
             availableSeats = await getAvailableSeats();
             if (availableSeats === null) {
                 console.error(`Error in fetching availableSeats in the server`);
@@ -253,9 +274,14 @@ seatQueue.process(async (job: { data: { customerId: string } }) => {
             console.error(`Failed to get the next customer to sit`);
         }
     }
-})
+});
 
-function inQueue(c: Customer) {
+/**
+ * Determines if a customer is still in the queue (either waiting or tableReady).
+ * @param {Customer} c - The customer object.
+ * @returns {boolean} - True if the customer is in the queue, otherwise false.
+ */
+function inQueue(c: Customer): boolean {
     return c.status === 'waiting' || c.status === 'tableReady';
 }
 
