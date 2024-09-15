@@ -16,10 +16,15 @@ const io = socketIo(server, {
 });
 
 const SERVE_TIME_PER_PERSON = 3 * 1000;
+const TOTAL_SEATS = 10;
+// socket.io rooms are not working. This is the workaround
+const socketMap = {};
 
 // in-mem for now. Will update to something per persistent
 const customers = [];
 const seatQueue = Queue('seating');
+// todo: add lock for running on multiple instances
+let availableSeats = TOTAL_SEATS;
 
 app.use(cors());
 app.use(express.json());
@@ -29,8 +34,10 @@ app.use(express.json());
  */
 io.on('connection', (socket) => {
     socket.on('setCustomerId', (data) => {
-        console.log(`Socket ${socket.id} joined room ${data.customerId}`);
-        socket.join(data.customerId);
+        // console.log(`Socket ${socket.id} mapped to ${data.customerId}`);
+        const sockets = (socketMap[data.customerId.toString()] || []);
+        sockets.push(socket);
+        socketMap[data.customerId.toString()] = sockets;
     });
 });
 
@@ -47,9 +54,7 @@ app.get('/api/customers/:id', (req, res) => {
     if (customer) {
         const position = customers.filter(c => inQueue(c) && c.id < customer.id).length;
 
-        // this is a wordaround. currently this is only updated when a client fetches details
-        // we will need to trigger this on server side in the future
-        if (position === 0 && customer.status === 'waiting') {
+        if (position === 0 && customer.status === 'waiting' && customer.partySize <= availableSeats) {
             customer.status = 'tableReady';
         }
 
@@ -72,6 +77,13 @@ app.get('/api/customers/:id', (req, res) => {
 app.post('/api/customers', (req, res) => {
 
     const { name, partySize } = req.body;
+
+    if (partySize > TOTAL_SEATS) {
+        res.status(400).json({
+            message: `Sorry. We cannot take groups larger than ${TOTAL_SEATS} people`
+        });
+        return;
+    }
     
     const newCustomer = {
         id: customers.length + 1,
@@ -86,7 +98,7 @@ app.post('/api/customers', (req, res) => {
     const position = customers.filter(inQueue).length - 1;
 
     // currently there are 2 places where we set tableReady. Maybe this is not good
-    if (position === 0) {
+    if (position === 0 && newCustomer.partySize <= availableSeats) {
         newCustomer.status = 'tableReady';
     }
 
@@ -103,34 +115,45 @@ app.put('/api/customers/:id/check-in', (req, res) => {
     const id = Number(req.params?.id);
     const customer = customers.find(c => c.id === id);
 
-    if (customer?.status === 'tableReady') {
+    if (customer?.status === 'tableReady' && customer.partySize <= availableSeats) {
         customer.status = 'seated';
-        // todo: deduct avaible seats
-        console.log(`Seating customer ${id}`);
-        seatQueue.add({ customerId: id }, { delay: customer.partySize * SERVE_TIME_PER_PERSON});
+        availableSeats -= customer.partySize;
+        console.log(`Seating customer ${id}. Available seats now: ${availableSeats}`);
+        seatQueue.add({ customerId: id }, {
+            delay: customer.partySize * SERVE_TIME_PER_PERSON,
+            removeOnComplete: true
+        });
         res.json({ message: `Customer ${id} checked in and seated`});
     } else {
         res.status(404).json({ message: 'Customer not ready or already seated'});
     }
 });
 
+/**
+ * Handles when customer finishes eating. We seat the next customer
+ */
 seatQueue.process(async (job) => {
     const { customerId } = job.data;
     const customer = customers.find(c => c.id == customerId); // todo: need to check if id is string or number
     
     if (customer) {
         customer.status = 'done';
-        // todo: add back available seats
+        availableSeats += customer.partySize; 
+        console.log(`Customer ${customer.id} finished dining and are leaving the restaurant. Available seats now: ${availableSeats}`);
         
         // notify next awaiting customer
         const nextCustomer = customers.find(c => c.status === 'waiting');
-        // todo: check if there are enough available seats
-        if (nextCustomer) {
+        if (nextCustomer && nextCustomer.partySize <= availableSeats) {
             nextCustomer.status = 'tableReady';
-            console.log(`Found next customer ${nextCustomer.id}. Emitting tableReady event`);
-            io.to(nextCustomer.id).emit('tableReady', {
-                customerId: nextCustomer.id
-            });
+            
+            const socket = socketMap[nextCustomer.id.toString()].find(c => c.connected);
+            if (socket) {
+                console.log(`Found next customer ${nextCustomer.id} and corresponding socket. Emitting tableReady event`);
+                socket.emit('tableReady');
+            } else {
+                console.log(`Found next customer ${nextCustomer.id} but cannot find corresponding socket`);
+            }
+            delete socketMap[nextCustomer.id.toString()];
         }
     }
 })
