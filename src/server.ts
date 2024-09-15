@@ -5,6 +5,8 @@ import http from 'http';
 import { Server as SocketIOServer } from 'socket.io';
 import cors from 'cors';
 import Queue from 'bull';
+import { createAdapter } from '@socket.io/redis-adapter';
+import { createClient } from 'redis';
 
 import {
     initRedis,
@@ -25,17 +27,31 @@ const io = new SocketIOServer(server, {
     cors: {
         origin: 'http://localhost:3000',
         methods: ['GET', 'POST'],
-        credentials: false // Allow credentials (cookies, authorization headers) do we need this??
+        credentials: false
     }
 });
+
+// Set up Redis clients for the Socket.io adapter
+const pubClient = createClient({ url: 'redis://localhost:6379 '});
+const subClient = pubClient.duplicate();
+pubClient.connect();
+subClient.connect();
+
+// Attach the Redis adapter to Socket.io for multi-instance communication
+io.adapter(createAdapter(pubClient, subClient));
 
 const SERVE_TIME_PER_PERSON = 3 * 1000;
 const TOTAL_SEATS = 10;
 // socket.io rooms are not working. This is the workaround
 // todo: replace with a LRU cache
-const socketMap: { [key: string]: Socket[] } = {};
+// const socketMap: { [key: string]: Socket[] } = {};
 
-const seatQueue = Queue('seating');
+const seatQueue = Queue('seating', {
+    redis: {
+        host: 'localhost',
+        port: 6379,
+    }
+});
 
 initRedis()
     .then(getAllCustomersFromRedis)
@@ -67,9 +83,8 @@ app.use(express.json());
  */
 io.on('connection', (socket: Socket) => {
     socket.on('setCustomerId', (data: { customerId: number }) => {
-        const sockets = (socketMap[data.customerId.toString()] || []) as Socket[];
-        sockets.push(socket);
-        socketMap[data.customerId.toString()] = sockets;
+        socket.join(data.customerId.toString());
+        console.log(`Socket ${socket.id} is joining room ${data.customerId}`);
     });
 });
 
@@ -84,7 +99,7 @@ app.get('/api/customers/:id', async (req: Request, res: Response) => {
     const cachedCustomers = await getAllCustomersFromRedis();
     const availableSeats = await getAvailableSeats()
 
-    if (customer && availableSeats) {
+    if (customer && availableSeats !== null) {
         const position = cachedCustomers.filter((c: Customer) => inQueue(c) && c.id < customer.id).length;
 
         if (position === 0 && customer.status === 'waiting' && customer.partySize <= availableSeats) {
@@ -99,7 +114,7 @@ app.get('/api/customers/:id', async (req: Request, res: Response) => {
             status: customer.status,
             position
         });
-    } else if (availableSeats) {
+    } else if (availableSeats !== null) {
         console.log('No customer found');
         res.status(404).json({ message: 'Customer not found' });
     } else {
@@ -235,14 +250,8 @@ seatQueue.process(async (job: { data: { customerId: string } }) => {
                 nextCustomer.status = 'tableReady';
                 await addCustomerToRedis(nextCustomer);
 
-                const socket = socketMap[nextCustomer.id.toString()].find(c => c.connected);
-                if (socket) {
-                    console.log(`Found next customer ${nextCustomer.id} and corresponding socket. Emitting tableReady event`);
-                    socket.emit('tableReady');
-                } else {
-                    console.log(`Found next customer ${nextCustomer.id} but cannot find corresponding socket`);
-                }
-                delete socketMap[nextCustomer.id.toString()];
+                io.to(nextCustomer.id.toString()).emit('tableReady');
+                console.log(`Notified customer ${nextCustomer.id} that their table is ready`);
             }
         } catch (err) {
             console.error(`Failed to get the next customer to sit`);

@@ -5,7 +5,7 @@
   "scripts": {
     "start": "ts-node src/server.ts",
     "build": "tsc",
-    "dev": "ts-node-dev src/server.ts",
+    "dev": "C:\\redis\\redis-cli.exe flushdb && ts-node-dev src/server.ts",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -13,6 +13,7 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@socket.io/redis-adapter": "^8.3.0",
     "bull": "^4.16.3",
     "cors": "^2.8.5",
     "express": "^4.21.0",
