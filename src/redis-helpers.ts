@@ -79,13 +79,13 @@ export const getNextCustomerId = async () => {
     return await redis.incr(CUSTOER_ID_KEY);
 };
 
-export const getAvailableSeats = async () : Promise<number> => {
+export const getAvailableSeats = async () : Promise<number | null> => {
     const seats = await redis.get(AVAILABLE_SEATS_KEY);
     if (seats) {
         return parseInt(seats);
     } else {
         console.error(`Failed to get availableSeats`);
-        return 0;
+        return null;
     }
 };
 
