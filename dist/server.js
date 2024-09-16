@@ -8,62 +8,95 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
-const express = require('express');
-const http = require('http');
-const socketIo = require('socket.io');
-const cors = require('cors');
-const Queue = require('bull');
-const { initRedis, addCustomerToRedis, deleteCustomerFromRedis, getCustomerFromRedis, getAllCustomersFromRedis, getNextCustomerId, getAvailableSeats, setAvailableSeats, } = require('./redis-helpers');
-const app = express();
-const server = http.createServer(app);
-const io = socketIo(server, {
+const express_1 = __importDefault(require("express"));
+const http_1 = __importDefault(require("http"));
+const socket_io_1 = require("socket.io");
+const cors_1 = __importDefault(require("cors"));
+const bull_1 = __importDefault(require("bull"));
+const redis_adapter_1 = require("@socket.io/redis-adapter");
+const redis_1 = require("redis");
+const redis_helpers_1 = require("./redis-helpers");
+const CLIENT_HOST = process.env.CLIENT_HOST;
+const app = (0, express_1.default)();
+const server = http_1.default.createServer(app);
+const io = new socket_io_1.Server(server, {
     cors: {
-        origin: 'http://localhost:3000',
-        methods: ['GET', 'POST'], // what is this???
-        allowedHeaders: ['my-custom-header'], // what is this???
-        credentials: true // Allow credentials (cookies, authorization headers) do we need this??
+        origin: CLIENT_HOST,
+        methods: ['GET', 'POST'],
+        credentials: false
     }
 });
+// Set up Redis clients for the Socket.io adapter
+const pubClient = (0, redis_1.createClient)({ url: process.env.REDIS_URL });
+const subClient = pubClient.duplicate();
+pubClient.connect();
+subClient.connect();
+// Attach the Redis adapter to Socket.io for multi-instance communication
+io.adapter((0, redis_adapter_1.createAdapter)(pubClient, subClient));
 const SERVE_TIME_PER_PERSON = 3 * 1000;
 const TOTAL_SEATS = 10;
-// socket.io rooms are not working. This is the workaround
-// todo: replace with a LRU cache
-const socketMap = {};
-const seatQueue = Queue('seating');
-initRedis()
-    .then(() => {
-    console.log(`setting availableSeats to ${TOTAL_SEATS}`);
-    return setAvailableSeats(TOTAL_SEATS); // note that this async
+const seatQueue = (0, bull_1.default)('seating', {
+    redis: process.env.REDIS_URL
+});
+/**
+ * Initializes Redis and updates available seats based on the current customer data.
+ */
+(0, redis_helpers_1.initRedis)()
+    .then(redis_helpers_1.getAllCustomersFromRedis)
+    .then((customers) => {
+    // Recalculate number of seated people upon app start up
+    return customers.reduce((seated, c) => {
+        if (c.status === 'seated') {
+            return seated + c.partySize;
+        }
+        else {
+            return seated;
+        }
+    }, 0);
+})
+    .then((seated) => {
+    console.log(`setting availableSeats to ${TOTAL_SEATS - seated}`);
+    (0, redis_helpers_1.setAvailableSeats)(TOTAL_SEATS - seated); // note this is async
 })
     .catch((err) => {
     console.error(err);
 });
-app.use(cors());
-app.use(express.json());
+app.use((0, cors_1.default)());
+app.use(express_1.default.json());
 /**
- * Maps socket to a customerId so we know which socket to inform when table is ready
+ * Maps socket to a customerId so we know which socket to inform when the table is ready.
+ * @param {Socket} socket The connected socket instance
  */
 io.on('connection', (socket) => {
+    /**
+     * Associates a customer ID with the socket connection
+     * @param {Object} data - Contains the customerId.
+     * @param {number} data.customerId - The customer ID to associate with the socket.
+     */
     socket.on('setCustomerId', (data) => {
-        const sockets = (socketMap[data.customerId.toString()] || []);
-        sockets.push(socket);
-        socketMap[data.customerId.toString()] = sockets;
+        socket.join(data.customerId.toString());
     });
 });
 /**
- * Fetches customer details. Sent when client does a page refresh
- *
+ * Fetches customer details, including their queue position and seating status.
+ * @route GET /api/customers/:id
+ * @param {Request} req - Express request object
+ * @param {Response} res - Express response object
  */
 app.get('/api/customers/:id', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     const { id } = req.params;
-    const customer = yield getCustomerFromRedis(id);
-    const cachedCustomers = yield getAllCustomersFromRedis();
-    if (customer) {
+    const customer = yield (0, redis_helpers_1.getCustomerFromRedis)(id);
+    const cachedCustomers = yield (0, redis_helpers_1.getAllCustomersFromRedis)();
+    const availableSeats = yield (0, redis_helpers_1.getAvailableSeats)();
+    if (customer && availableSeats !== null) {
         const position = cachedCustomers.filter((c) => inQueue(c) && c.id < customer.id).length;
-        if (position === 0 && customer.status === 'waiting' && customer.partySize <= (yield getAvailableSeats())) {
+        if (position === 0 && customer.status === 'waiting' && customer.partySize <= availableSeats) {
             customer.status = 'tableReady';
-            yield addCustomerToRedis(customer);
+            yield (0, redis_helpers_1.addCustomerToRedis)(customer);
         }
         res.json({
             id: customer.id,
@@ -73,15 +106,25 @@ app.get('/api/customers/:id', (req, res) => __awaiter(void 0, void 0, void 0, fu
             position
         });
     }
-    else {
+    else if (availableSeats !== null) {
         console.log('No customer found');
         res.status(404).json({ message: 'Customer not found' });
     }
+    else {
+        console.error(`Error in fetching availableSeats in the server`);
+        res.status(500).json({ message: `Error in fetching availableSeats in the server` });
+    }
 }));
+/**
+ * Deletes a customer from the system.
+ * @route DELETE /api/customers/:id
+ * @param {Request} req - Express request object
+ * @param {Response} res - Express response object
+ */
 app.delete('/api/customers/:id', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     const { id } = req.params;
     try {
-        yield deleteCustomerFromRedis(id);
+        yield (0, redis_helpers_1.deleteCustomerFromRedis)(id);
         res.sendStatus(204);
     }
     catch (err) {
@@ -90,9 +133,18 @@ app.delete('/api/customers/:id', (req, res) => __awaiter(void 0, void 0, void 0,
     }
 }));
 /**
- * Handles when a new customer joins
+ * Adds a new customer to the queue.
+ * @route POST /api/customers
+ * @param {Request} req - Express request object containing customer name and party size
+ * @param {Response} res - Express response object
  */
 app.post('/api/customers', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    const availableSeats = yield (0, redis_helpers_1.getAvailableSeats)();
+    if (availableSeats === null) {
+        console.error(`Error in fetching availableSeats in the server`);
+        res.status(500).json({ message: `Error in fetching availableSeats in the server` });
+        return;
+    }
     const { name, partySize } = req.body;
     if (partySize > TOTAL_SEATS) {
         res.status(400).json({
@@ -101,19 +153,17 @@ app.post('/api/customers', (req, res) => __awaiter(void 0, void 0, void 0, funct
         return;
     }
     const newCustomer = {
-        id: yield getNextCustomerId(),
+        id: yield (0, redis_helpers_1.getNextCustomerId)(),
         name,
         partySize,
         status: 'waiting'
     };
-    // this will do a parse on all the customers, maybe there is a more efficient way
-    const customers = yield getAllCustomersFromRedis();
+    const customers = yield (0, redis_helpers_1.getAllCustomersFromRedis)();
     const position = customers.filter(inQueue).length;
-    // currently there are 2 places where we set tableReady. Maybe this is not good
-    if (position === 0 && newCustomer.partySize <= (yield getAvailableSeats())) {
+    if (position === 0 && newCustomer.partySize <= availableSeats) {
         newCustomer.status = 'tableReady';
     }
-    yield addCustomerToRedis(newCustomer);
+    yield (0, redis_helpers_1.addCustomerToRedis)(newCustomer);
     res.json({
         id: newCustomer.id,
         name: newCustomer.name,
@@ -122,17 +172,28 @@ app.post('/api/customers', (req, res) => __awaiter(void 0, void 0, void 0, funct
         position
     });
 }));
+/**
+ * Checks in a customer, seating them if their table is ready.
+ * @route PUT /api/customers/:id/check-in
+ * @param {Request} req - Express request object containing the customer ID
+ * @param {Response} res - Express response object
+ */
 app.put('/api/customers/:id/check-in', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     var _a;
-    const id = Number((_a = req.params) === null || _a === void 0 ? void 0 : _a.id);
-    const customer = yield getCustomerFromRedis(id);
-    let availableSeats = yield getAvailableSeats();
+    const id = (_a = req.params) === null || _a === void 0 ? void 0 : _a.id;
+    const customer = yield (0, redis_helpers_1.getCustomerFromRedis)(id);
+    let availableSeats = yield (0, redis_helpers_1.getAvailableSeats)();
+    if (availableSeats === null) {
+        console.error(`Error in fetching availableSeats in the server`);
+        res.status(500).json({ message: `Error in fetching availableSeats in the server` });
+        return;
+    }
     if ((customer === null || customer === void 0 ? void 0 : customer.status) === 'tableReady' && customer.partySize <= availableSeats) {
         customer.status = 'seated';
         availableSeats -= customer.partySize;
-        yield setAvailableSeats(availableSeats);
-        yield addCustomerToRedis(customer);
-        console.log(`Seating customer ${id}. Available seats now: ${availableSeats}`);
+        yield (0, redis_helpers_1.setAvailableSeats)(availableSeats);
+        yield (0, redis_helpers_1.addCustomerToRedis)(customer);
+        console.log(`Seating customer ${id}. There are ${availableSeats} seats available`);
         seatQueue.add({ customerId: id }, {
             delay: customer.partySize * SERVE_TIME_PER_PERSON,
             removeOnComplete: true
@@ -144,35 +205,44 @@ app.put('/api/customers/:id/check-in', (req, res) => __awaiter(void 0, void 0, v
     }
 }));
 /**
- * Handles when customer finishes eating. We seat the next customer
+ * Health check endpoint. Checks if app is running properly.
+ * @route GET /health
+ * @param {Request} req - Express request object containing the customer ID
+ * @param {Response} res - Express response object
+ */
+app.get('/health', (_req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    res.sendStatus(200);
+}));
+/**
+ * Processes the completion of a customer's dining session and notifies the next waiting customer.
+ * @param {Object} job - Bull job containing the customerId
  */
 seatQueue.process((job) => __awaiter(void 0, void 0, void 0, function* () {
     const { customerId } = job.data;
-    const customer = yield getCustomerFromRedis(customerId);
+    const customer = yield (0, redis_helpers_1.getCustomerFromRedis)(customerId);
+    let availableSeats = yield (0, redis_helpers_1.getAvailableSeats)();
+    if (availableSeats === null) {
+        console.error(`Error in fetching availableSeats in the server`);
+        throw Error(`Error in fetching availableSeats in the server`);
+    }
     if (customer) {
-        yield deleteCustomerFromRedis(customerId);
-        let availableSeats = yield getAvailableSeats();
+        yield (0, redis_helpers_1.deleteCustomerFromRedis)(customerId);
         availableSeats += customer.partySize;
-        yield setAvailableSeats(availableSeats);
+        yield (0, redis_helpers_1.setAvailableSeats)(availableSeats);
         console.log(`Customer ${customer.id} finished dining and are leaving the restaurant. Available seats now: ${availableSeats}`);
-        // notify next awaiting customer
         try {
-            const customers = yield getAllCustomersFromRedis();
+            const customers = yield (0, redis_helpers_1.getAllCustomersFromRedis)();
             const nextCustomer = customers.find((c) => c.status === 'waiting');
-            // fetch availableSeats again to make sure we have the most up-to-date data
-            availableSeats = yield getAvailableSeats();
+            availableSeats = yield (0, redis_helpers_1.getAvailableSeats)();
+            if (availableSeats === null) {
+                console.error(`Error in fetching availableSeats in the server`);
+                throw Error(`Error in fetching availableSeats in the server`);
+            }
             if (nextCustomer && nextCustomer.partySize <= availableSeats) {
                 nextCustomer.status = 'tableReady';
-                yield addCustomerToRedis(nextCustomer);
-                const socket = socketMap[nextCustomer.id.toString()].find(c => c.connected);
-                if (socket) {
-                    console.log(`Found next customer ${nextCustomer.id} and corresponding socket. Emitting tableReady event`);
-                    socket.emit('tableReady');
-                }
-                else {
-                    console.log(`Found next customer ${nextCustomer.id} but cannot find corresponding socket`);
-                }
-                delete socketMap[nextCustomer.id.toString()];
+                yield (0, redis_helpers_1.addCustomerToRedis)(nextCustomer);
+                io.to(nextCustomer.id.toString()).emit('tableReady');
+                console.log(`Notified customer ${nextCustomer.id} that their table is ready`);
             }
         }
         catch (err) {
@@ -180,6 +250,11 @@ seatQueue.process((job) => __awaiter(void 0, void 0, void 0, function* () {
         }
     }
 }));
+/**
+ * Determines if a customer is still in the queue (either waiting or tableReady).
+ * @param {Customer} c - The customer object.
+ * @returns {boolean} - True if the customer is in the queue, otherwise false.
+ */
 function inQueue(c) {
     return c.status === 'waiting' || c.status === 'tableReady';
 }
