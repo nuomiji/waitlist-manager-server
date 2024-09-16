@@ -230,6 +230,16 @@ app.put('/api/customers/:id/check-in', async (req: Request, res: Response) => {
 });
 
 /**
+ * Health check endpoint. Checks if app is running properly.
+ * @route GET /health
+ * @param {Request} req - Express request object containing the customer ID
+ * @param {Response} res - Express response object
+ */
+app.get('/health', async (_req: Request, res: Response) => {
+    res.sendStatus(200);
+});
+
+/**
  * Processes the completion of a customer's dining session and notifies the next waiting customer.
  * @param {Object} job - Bull job containing the customerId
  */
