@@ -1,3 +1,6 @@
+import dotenv from 'dotenv';
+dotenv.config();
+
 import { Request, Response } from "express";
 import { Socket } from "socket.io";
 import express from 'express';
