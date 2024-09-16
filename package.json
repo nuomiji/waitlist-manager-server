@@ -3,9 +3,10 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "start": "ts-node src/server.ts",
+    "start": "node dist/server.js",
+    "postinstall": "npm run build",
     "build": "tsc",
-    "dev": "C:\\redis\\redis-cli.exe flushdb && ts-node-dev src/server.ts",
+    "dev": "ts-node-dev src/server.ts",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -29,5 +30,9 @@
     "@types/socket.io": "^3.0.1",
     "ts-node-dev": "^2.0.0",
     "typescript": "^5.6.2"
+  },
+  "engines": {
+    "node": "18.x",
+    "npm": ">=8.x"
   }
 }

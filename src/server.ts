@@ -32,7 +32,7 @@ const io = new SocketIOServer(server, {
 });
 
 // Set up Redis clients for the Socket.io adapter
-const pubClient = createClient({ url: 'redis://localhost:6379' });
+const pubClient = createClient({ url: process.env.REDIS_URL });
 const subClient = pubClient.duplicate();
 pubClient.connect();
 subClient.connect();
@@ -44,10 +44,7 @@ const SERVE_TIME_PER_PERSON = 3 * 1000;
 const TOTAL_SEATS = 10;
 
 const seatQueue = Queue('seating', {
-    redis: {
-        host: 'localhost',
-        port: 6379,
-    }
+    redis: process.env.REDIS_URL
 });
 
 /**

@@ -7,6 +7,6 @@
     "skipLibCheck": true,
     "outDir": "./dist"
   },
-  "include": ["src/**/*.ts"], // Ensure it includes the 'src' folder
+  "include": ["src/**/*"],
   "exclude": ["node_modules"]
 }

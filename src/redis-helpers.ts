@@ -14,7 +14,7 @@ let redis: Redis;
  */
 export const initRedis = (): Promise<void> => {
     return new Promise<void>((resolve, reject) => {
-        redis = new Redis();
+        redis = new Redis(process.env.REDIS_URL!);
 
         redis.on('connect', () => {
             console.log(`Redis client connected`);
