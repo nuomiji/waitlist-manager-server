@@ -12,33 +12,11 @@ The system supports real-time updates using WebSockets and manages asynchronous 
 - **Asynchronous job processing** using Bull for handling seating and table readiness.
 - **Redis pub/sub adapter** for scaling the WebSocket connections across multiple instances.
 
-## Installation
-
-1. **Clone the repository**:
-   ```bash
-   git clone <repository-url>
-   cd <repository-folder>
-   ```
-
-2. **Install dependencies**:
-   ```bash
-   npm install
-   ```
-
-3. **Start Redis** (if not already running):
-   ```bash
-   redis-server
-   ```
-
-4. **Run the server**:
-   ```bash
-   npm start
-   ```
-
 ## Environment Variables
 
-- `PORT`: The port on which the server will run. Defaults to `3001`.
-- `REDIS_URL`: The Redis instance URL. Defaults to `redis://localhost:6379`.
+- `PORT`: The port on which the server will run.
+- `REDIS_URL`: The Redis instance URL.
+- `CLIENT_HOST`: The domain which client application is hosted. This is required to set up CORS for websocket connections.
 
 ## Redis Integration
 
@@ -137,3 +115,8 @@ Handles when a customer finishes dining. This task is delayed for the duration o
 
 Once the server is started, customers can be added to the queue via the REST API, and WebSocket connections can be used to notify them when their tables are ready.
 
+## Current Limitations and Future Improvements
+- Handle when customer leaves page and blocks the queue for others
+- Notify more than 1 party if there are enough available seats
+- When a customr leaves when their table is ready, server needs to seat the next customer
+- Improve algorithm to fetch and filter on customers
