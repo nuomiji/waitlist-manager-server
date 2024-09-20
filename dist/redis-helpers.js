@@ -23,7 +23,10 @@ let redis;
  *
  * @returns {Promise<void>} A promise that resolves when Redis is ready, or rejects on connection failure
  */
-const initRedis = () => {
+const initRedis = (redisClient = null) => {
+    if (redisClient) {
+        return redisClient;
+    }
     return new Promise((resolve, reject) => {
         redis = new ioredis_1.default(process.env.REDIS_URL);
         redis.on('connect', () => {

@@ -12,6 +12,31 @@
                 "<node_internals>/**"
             ],
             "program": "${workspaceFolder}\\dist\\server.js"
-        }
+        },
+        {
+            "type": "node",
+            "request": "launch",
+            "name": "Debug Mocha Tests",
+            "program": "${workspaceFolder}/node_modules/mocha/bin/_mocha",
+            "args": [
+              "--require",
+              "ts-node/register", // Required if using TypeScript, remove if using JS
+              "--timeout",
+              "999999",
+              "--colors",
+              "${workspaceFolder}/tests/**/*.test.mjs" // Adjust the path to your test files
+            ],
+            "internalConsoleOptions": "openOnSessionStart",
+            "skipFiles": ["<node_internals>/**"],
+            "env": {
+              "NODE_ENV": "test"
+            },
+            "console": "integratedTerminal",
+            "sourceMaps": true,
+            "resolveSourceMapLocations": [
+              "${workspaceFolder}/**",
+              "!**/node_modules/**"
+            ]
+          }
     ]
 }

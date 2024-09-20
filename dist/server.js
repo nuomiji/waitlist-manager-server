@@ -12,6 +12,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.server = exports.app = void 0;
 const dotenv_1 = __importDefault(require("dotenv"));
 dotenv_1.default.config();
 const express_1 = __importDefault(require("express"));
@@ -24,7 +25,9 @@ const redis_1 = require("redis");
 const redis_helpers_1 = require("./redis-helpers");
 const CLIENT_HOST = process.env.CLIENT_HOST;
 const app = (0, express_1.default)();
+exports.app = app;
 const server = http_1.default.createServer(app);
+exports.server = server;
 const io = new socket_io_1.Server(server, {
     cors: {
         origin: CLIENT_HOST,
