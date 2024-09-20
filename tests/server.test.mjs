@@ -54,6 +54,17 @@ describe('API Endpoints', () => {
     expect(res.data.name).to.equal(newCustomer.name);
   });
 
+  it('should reject new customer if party size is too big on POST /api/customers', async () => {
+    const newCustomer = { name: 'Kelly', partySize: 20 };
+    try {
+      await axios.post(`${BASE_URL}/api/customers`, newCustomer);
+      throw new Error('Should not get to here');
+    } catch (err) {
+      expect(err.status).to.equal(400);
+      expect(err.response.data.message).to.equal('Sorry. We cannot take groups larger than 10 people');
+    }
+  });
+
   it('should return customer details on GET /api/customers', async () => {
     const newCustomer = { name: 'Kelly', partySize: 8 };
     let res = await axios.post(`${BASE_URL}/api/customers`, newCustomer);
@@ -74,9 +85,24 @@ describe('API Endpoints', () => {
 
     try {
       res = await axios.get(`${BASE_URL}/api/customers/${customerId.id}`);
-      throw new Error('Shouldn\'t get to here');
+      throw new Error('Should not get to here');
     } catch (err) {
       expect(err.status).to.equal(404);
+      expect(err.response.data.message).to.equal('Customer not found');
+    }
+  });
+
+  it('should reject with 404 on POST /api/customers/:id/check-in if customer is not ready', async () => {
+    const newCustomer = { name: 'John Doe', partySize: 4 };
+    let res = await axios.post(`${BASE_URL}/api/customers`, newCustomer);
+    expect(res.status).to.equal(200);
+    const createdCustomer = res.data;
+  
+    try {
+      await axios.post(`${BASE_URL}/api/customers/${createdCustomer.id}/check-in`);
+      throw new Error('Should not get to here');
+    } catch (err) {
+      expect(err.response.status).to.equal(404);
     }
   });
 });
